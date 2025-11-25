@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "solvx-databricks-utils"
+version = "0.1.0"
+description = "Databricks utility package for API ingestion, logging, and Delta workflows."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+keywords = ["databricks", "delta", "spark", "ingestion", "api", "etl"]
+
+authors = [
+  { name = "SolvX", email = "info@solvx.com" }
+]
+
+dependencies = [
+    "requests>=2.31.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/solvx/solvx-databricks-utils"
+Repository = "https://github.com/solvx/solvx-databricks-utils"
+Issues = "https://github.com/solvx/solvx-databricks-utils/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]

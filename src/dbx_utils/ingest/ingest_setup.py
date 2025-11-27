@@ -124,14 +124,19 @@ def create_volume(
     catalog: str,
     schema: str,
     volume: str,
-    location: str,
     spark: SparkSession | None = None,
 ) -> str:
     """
-    Create a Unity Catalog Volume.
+    Create a MANAGED Unity Catalog volume.
 
-    Example volume name: dev.tools.myvolume
-    Example location: 'abfss://delta@storage.dfs.core.windows.net/myvolume/'
+    Assumptions:
+      • Catalog already has a MANAGED LOCATION (created earlier)
+      • Schema already exists (created earlier)
+      • Volume will be created inside the catalog's managed storage root
+      • LOCATION clause must NOT be used for managed volumes
+
+    storage_root is kept ONLY so users don't forget where things live,
+    but it is NOT used directly in CREATE VOLUME.
     """
     logger = getLogger(__name__)
     spark = _resolve_spark(spark)
@@ -139,43 +144,61 @@ def create_volume(
     full_volume_name = f"{catalog}.{schema}.{volume}"
 
     try:
-        logger.info(f"Preparing volume '{full_volume_name}'.")
+        logger.info(f"Preparing managed volume '{full_volume_name}'.")
 
-        # Ensure catalog & schema exist (volume cannot create them)
-        spark.sql(f"CREATE CATALOG IF NOT EXISTS {catalog}")
-        spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema}")
+        # -------------------------------------------------
+        # Validate catalog exists
+        # -------------------------------------------------
+        catalogs = [row.catalog for row in spark.sql("SHOW CATALOGS").collect()]
+        if catalog not in catalogs:
+            raise RuntimeError(
+                f"Catalog '{catalog}' does not exist.\n"
+                f"Please create it first using:\n"
+                f"  CREATE CATALOG {catalog};\n"
+                f"or use the function ingest_setup.create_endpoint_table()"
+            )
 
-        # Check if volume exists
-        volume_exists = False
+        # -------------------------------------------------
+        # Validate schema exists
+        # -------------------------------------------------
+        schemas = [
+            row.databaseName for row in spark.sql(f"SHOW SCHEMAS IN {catalog}").collect()
+        ]
+        if schema not in schemas:
+            raise RuntimeError(
+                f"Schema '{catalog}.{schema}' does not exist.\n"
+                f"Please create it first using:\n"
+                f"  CREATE SCHEMA {catalog}.{schema};\n"
+            )
+
+        # -------------------------------------------------
+        # Check if volume already exists
+        # -------------------------------------------------
         try:
             spark.sql(f"DESCRIBE VOLUME {full_volume_name}")
-            volume_exists = True
-        except Exception:
-            volume_exists = False
-
-        if volume_exists:
-            logger.info(
-                f"Volume '{full_volume_name}' already exists. No changes made."
-            )
+            logger.info(f"Volume '{full_volume_name}' already exists. No changes made.")
             return full_volume_name
+        except Exception:
+            pass  # Volume does NOT exist → create it
 
-        # Create the volume
+        # -------------------------------------------------
+        # Create MANAGED volume (NO LOCATION!)
+        # -------------------------------------------------
         logger.info(
-            f"Creating volume '{full_volume_name}' "
-            f"at location '{location}'."
+            f"Creating managed volume '{full_volume_name}'. "
+            f"(Volume automatically stored under catalog's managed root)"
         )
 
-        spark.sql(f"""
-        CREATE VOLUME {full_volume_name}
-        LOCATION '{location}'
-        """)
+        spark.sql(f"CREATE VOLUME {full_volume_name}")
 
-        logger.info(f"Successfully created volume '{full_volume_name}'.")
+        logger.info(f"Successfully created managed volume '{full_volume_name}'.")
         return full_volume_name
 
     except Exception as e:
         logger.error(
-            f"Failed to create volume '{full_volume_name}': {e}",
+            f"Failed to create managed volume '{full_volume_name}': {e}",
             exc_info=True,
         )
         raise
+
+

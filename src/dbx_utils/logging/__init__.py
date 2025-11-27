@@ -5,9 +5,9 @@ Databricks-friendly logger built on the standard :mod:`logging` package.
 import logging
 import sys
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from zoneinfo import ZoneInfo
-from typing import List, Dict, Any
+
 from pyspark.sql import SparkSession
 
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -34,7 +34,6 @@ def getLogger(
     """
     Return a timezone-aware logger with normal logging behavior.
     """
-
     logger_name = name or __name__
     logger = logging.getLogger(logger_name)
 
@@ -63,11 +62,28 @@ class DatabricksTableHandler(logging.Handler):
         spark: SparkSession,
         table_name: str,
         timezone: str = DEFAULT_TIMEZONE,
+        compute_id: Optional[str] = None,
     ) -> None:
+        """
+        Parameters
+        ----------
+        spark : SparkSession
+            Active SparkSession.
+        table_name : str
+            Fully qualified table name, e.g. "dev.tools.logging".
+        timezone : str
+            IANA timezone name.
+        compute_id : Optional[str]
+            Identifier for the job/compute/cluster/run.
+            You can pass something like:
+            spark.conf.get("spark.databricks.clusterUsageTags.clusterId", None)
+            or a Databricks job run id.
+        """
         super().__init__()
         self.spark = spark
         self.table_name = table_name
         self.timezone = ZoneInfo(timezone)
+        self.compute_id = compute_id
         self._buffer: List[Dict[str, Any]] = []
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -85,45 +101,71 @@ class DatabricksTableHandler(logging.Handler):
                 "module": record.module,
                 "func_name": record.funcName,
                 "line_no": record.lineno,
+                "compute_id": self.compute_id,    # job/compute/run identifier
             }
             self._buffer.append(entry)
         except Exception:
             # Don't let logging failures crash the app
             self.handleError(record)
 
+    def _check_schema_compatible(self, existing_schema, new_schema) -> None:
+        """
+        Ensure the existing table has at least all required columns
+        with the same types as the new DataFrame.
+
+        Extra columns in the existing table are allowed.
+
+        Raises a ValueError with a clear message if required columns
+        are missing or have different types.
+        """
+        existing_fields = {f.name: f for f in existing_schema}
+
+        missing_or_mismatched: List[str] = []
+        for f in new_schema:
+            existing_field = existing_fields.get(f.name)
+            if existing_field is None:
+                missing_or_mismatched.append(
+                    f"- missing required column '{f.name}' (type {f.dataType})"
+                )
+            elif existing_field.dataType != f.dataType:
+                missing_or_mismatched.append(
+                    f"- column '{f.name}' has type {existing_field.dataType}, "
+                    f"expected {f.dataType}"
+                )
+
+        if missing_or_mismatched:
+            details = "\n".join(missing_or_mismatched)
+            raise ValueError(
+                f"Logging table '{self.table_name}' already exists but its schema "
+                f"is not compatible.\n"
+                f"The table will NOT be overwritten to protect existing data.\n"
+                f"Issues:\n{details}\n\n"
+                f"Existing schema: {existing_schema}\n"
+                f"Required schema: {new_schema}"
+            )
+
     def flush_to_table(self) -> None:
         """
         Write all buffered log entries to the Databricks table.
-        - If table does not exist: create it.
-        - If table exists: check schema and append.
+
+        - If table does not exist: create it (no overwrite of any existing table).
+        - If table exists: ensure it has all required columns with correct types.
+          Extra columns are allowed.
         """
         if not self._buffer:
             return  # nothing to do
 
         df = self.spark.createDataFrame(self._buffer)
 
-        # Create table if needed
         if not self.spark.catalog.tableExists(self.table_name):
-            (
-                df.write
-                .mode("overwrite")
-                .saveAsTable(self.table_name)
-            )
+            # Table does not exist: create it. We don't use overwrite, we just create.
+            df.write.saveAsTable(self.table_name)
         else:
-            # Check schema compatibility (simple check)
+            # Table exists: check schema compatibility before appending.
             existing_schema = self.spark.table(self.table_name).schema
-            if existing_schema != df.schema:
-                raise ValueError(
-                    f"Existing table {self.table_name!r} has different schema.\n"
-                    f"Existing: {existing_schema}\n"
-                    f"New: {df.schema}"
-                )
+            self._check_schema_compatible(existing_schema, df.schema)
 
-            (
-                df.write
-                .mode("append")
-                .saveAsTable(self.table_name)
-            )
+            df.write.mode("append").saveAsTable(self.table_name)
 
         # Clear buffer after successful write
         self._buffer.clear()
@@ -134,22 +176,28 @@ def enable_table_logging(
     spark: SparkSession,
     table_name: str,
     timezone: str = DEFAULT_TIMEZONE,
+    compute_id: Optional[str] = None,
 ) -> DatabricksTableHandler:
     """
     Attach a DatabricksTableHandler to an existing logger.
 
     Usage:
         logger = getLogger("my_app")
-        handler = enable_table_logging(logger, spark, "dev.tools.logging")
+        handler = enable_table_logging(
+            logger,
+            spark,
+            "dev.tools.logging",
+            compute_id=spark.conf.get("spark.databricks.job.runId", None),
+        )
     """
     handler = DatabricksTableHandler(
         spark=spark,
         table_name=table_name,
         timezone=timezone,
+        compute_id=compute_id,
     )
     logger.addHandler(handler)
     return handler
-
 
 
 __all__ = [
@@ -159,4 +207,3 @@ __all__ = [
     "DatabricksTableHandler",
     "enable_table_logging",
 ]
-

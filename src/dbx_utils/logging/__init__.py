@@ -7,8 +7,15 @@ import sys
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from zoneinfo import ZoneInfo
-
 from pyspark.sql import SparkSession
+from pyspark.sql.types import (
+    StructType,
+    StructField,
+    TimestampType,
+    StringType,
+    IntegerType,
+)
+
 
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 DEFAULT_TIMEZONE = "Europe/Amsterdam"
@@ -75,9 +82,6 @@ class DatabricksTableHandler(logging.Handler):
             IANA timezone name.
         compute_id : Optional[str]
             Identifier for the job/compute/cluster/run.
-            You can pass something like:
-            spark.conf.get("spark.databricks.clusterUsageTags.clusterId", None)
-            or a Databricks job run id.
         """
         super().__init__()
         self.spark = spark
@@ -85,6 +89,20 @@ class DatabricksTableHandler(logging.Handler):
         self.timezone = ZoneInfo(timezone)
         self.compute_id = compute_id
         self._buffer: List[Dict[str, Any]] = []
+
+        # Explicit schema so Spark doesn't have to infer types
+        self._schema = StructType(
+            [
+                StructField("timestamp", TimestampType(), nullable=False),
+                StructField("level", StringType(), nullable=False),
+                StructField("logger", StringType(), nullable=False),
+                StructField("message", StringType(), nullable=True),
+                StructField("module", StringType(), nullable=True),
+                StructField("func_name", StringType(), nullable=True),
+                StructField("line_no", IntegerType(), nullable=True),
+                StructField("compute_id", StringType(), nullable=True),
+            ]
+        )
 
     def emit(self, record: logging.LogRecord) -> None:
         """
@@ -94,14 +112,14 @@ class DatabricksTableHandler(logging.Handler):
         try:
             ts = datetime.fromtimestamp(record.created, self.timezone)
             entry = {
-                "timestamp": ts,                  # timestamp
-                "level": record.levelname,        # "INFO", "WARNING", ...
-                "logger": record.name,            # logger name
-                "message": record.getMessage(),   # plain message
+                "timestamp": ts,
+                "level": record.levelname,
+                "logger": record.name,
+                "message": record.getMessage(),
                 "module": record.module,
                 "func_name": record.funcName,
                 "line_no": record.lineno,
-                "compute_id": self.compute_id,    # job/compute/run identifier
+                "compute_id": self.compute_id,
             }
             self._buffer.append(entry)
         except Exception:
@@ -114,9 +132,6 @@ class DatabricksTableHandler(logging.Handler):
         with the same types as the new DataFrame.
 
         Extra columns in the existing table are allowed.
-
-        Raises a ValueError with a clear message if required columns
-        are missing or have different types.
         """
         existing_fields = {f.name: f for f in existing_schema}
 
@@ -136,29 +151,36 @@ class DatabricksTableHandler(logging.Handler):
         if missing_or_mismatched:
             details = "\n".join(missing_or_mismatched)
             raise ValueError(
-                f"Logging table '{self.table_name}' already exists but its schema "
-                f"is not compatible.\n"
-                f"The table will NOT be overwritten to protect existing data.\n"
-                f"Issues:\n{details}\n\n"
+                f"Cannot use table '{self.table_name}' for logging because its schema "
+                f"is not compatible with the expected logging schema.\n\n"
+                f"The table will NOT be changed or overwritten to protect existing data.\n\n"
+                f"This most likely means you already have a table with different "
+                f"column types or missing columns.\n\n"
+                f"To fix this, either:\n"
+                f"  • DROP TABLE {self.table_name}\n"
+                f"  • or configure a different table name in enable_table_logging(...).\n\n"
+                f"Issues found:\n{details}\n\n"
                 f"Existing schema: {existing_schema}\n"
                 f"Required schema: {new_schema}"
             )
+
 
     def flush_to_table(self) -> None:
         """
         Write all buffered log entries to the Databricks table.
 
-        - If table does not exist: create it (no overwrite of any existing table).
+        - If table does not exist: create it (no overwrite).
         - If table exists: ensure it has all required columns with correct types.
           Extra columns are allowed.
         """
         if not self._buffer:
             return  # nothing to do
 
-        df = self.spark.createDataFrame(self._buffer)
+        # Use explicit schema to avoid CANNOT_DETERMINE_TYPE inference errors
+        df = self.spark.createDataFrame(self._buffer, schema=self._schema)
 
         if not self.spark.catalog.tableExists(self.table_name):
-            # Table does not exist: create it. We don't use overwrite, we just create.
+            # Table does not exist: create it (no overwrite).
             df.write.saveAsTable(self.table_name)
         else:
             # Table exists: check schema compatibility before appending.

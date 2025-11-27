@@ -19,6 +19,11 @@ dependencies = [
     "requests>=2.31.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.1",
+]
+
 [project.urls]
 Homepage = "https://github.com/solvx/solvx-databricks-utils"
 Repository = "https://github.com/solvx/solvx-databricks-utils"
@@ -26,4 +31,6 @@ Issues = "https://github.com/solvx/solvx-databricks-utils/issues"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["dbx_utils"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

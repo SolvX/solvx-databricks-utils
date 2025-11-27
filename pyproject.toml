@@ -26,4 +26,6 @@ Issues = "https://github.com/solvx/solvx-databricks-utils/issues"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["dbx_utils"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -3,10 +3,10 @@ from dbx_utils.logging import getLogger  # your custom logger
 
 
 def ingest_setup(
-    spark: SparkSession,
     catalog: str,
     schema: str,
     table: str,
+    spark: SparkSession | None = None,
 ) -> str:
     """
     Create (if not exists) the API configuration table that stores:
@@ -18,10 +18,35 @@ def ingest_setup(
 
     The setup only has to run once in total and doesn't need to run every job.
 
-    Returns the full table name (catalog.schema.table).
+    Parameters
+    ----------
+    catalog : str
+        Unity Catalog catalog name, e.g. "vlad".
+    schema : str
+        Schema name, e.g. "api".
+    table : str
+        Table name, e.g. "empire".
+    spark : SparkSession | None
+        Optional SparkSession. If None, the active SparkSession is used
+        (as in Databricks notebooks).
+
+    Returns
+    -------
+    str
+        The full table name (catalog.schema.table).
     """
     logger = getLogger(__name__)
     full_table_name = f"{catalog}.{schema}.{table}"
+
+    # Resolve SparkSession
+    if spark is None:
+        spark = SparkSession.getActiveSession()
+        if spark is None:
+            raise RuntimeError(
+                "No active SparkSession found. "
+                "On Databricks this should not happen; "
+                "outside Databricks, pass `spark` explicitly to ingest_setup()."
+            )
 
     try:
         logger.info(f"Starting ingest setup for table '{full_table_name}'.")

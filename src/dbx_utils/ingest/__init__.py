@@ -1,3 +1,3 @@
-from .step_0_prepare_architecture import ingest_setup
+from .ingest_setup import create_endpoint_table, create_volume
 
-__all__ = ["ingest_setup"]
+__all__ = ["create_endpoint_table", "create_volume"]

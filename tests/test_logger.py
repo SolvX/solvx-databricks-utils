@@ -1,4 +1,4 @@
-from dbx_utils.logging import DEFAULT_LOG_FORMAT, getLogger
+from dbx_utils import DEFAULT_LOG_FORMAT, getLogger
 
 
 def test_get_logger_writes_to_stdout(capsys):

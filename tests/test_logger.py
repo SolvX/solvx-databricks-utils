@@ -1,3 +1,5 @@
+# tests/test_logging.py
+import logging
 from dbx_utils import DEFAULT_LOG_FORMAT, getLogger
 
 
@@ -11,7 +13,7 @@ def test_get_logger_writes_to_stdout(capsys):
 
 
 def test_get_logger_sets_default_format():
-    logger = getlogger("format_logger", level=logging.DEBUG)
+    logger = getLogger("format_logger", level=logging.DEBUG)  # <- capital G
     handler = next(
         h for h in logger.handlers if isinstance(h, logging.StreamHandler)
     )

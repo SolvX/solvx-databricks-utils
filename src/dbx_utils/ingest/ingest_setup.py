@@ -24,11 +24,11 @@ def _resolve_spark(spark: SparkSession | None) -> SparkSession:
 # 1. CREATE ENDPOINT CONFIG TABLE
 # -------------------------------------------------------------
 def create_endpoint_table(
-    catalog: str,
-    schema: str,
-    table: str,
-    spark: SparkSession | None = None,
-    managed_location: str | None = None,
+        catalog: str,
+        schema: str,
+        table: str,
+        spark: SparkSession | None = None,
+        managed_location: str | None = None,
 ) -> str:
     """
     Create (if not exists) the API configuration table that stores:
@@ -97,13 +97,13 @@ def create_endpoint_table(
         # ------------------
         logger.info(f"Creating new endpoint table '{full_table_name}'.")
         spark.sql(f"""
-        CREATE TABLE {full_table_name} (
-          id BIGINT GENERATED ALWAYS AS IDENTITY,
-          endpoint STRING,
-          params MAP<STRING, STRING>,
-          job_settings MAP<STRING, STRING>
-        )
-        USING DELTA
+            CREATE TABLE {full_table_name} (
+              id BIGINT GENERATED ALWAYS AS IDENTITY,
+              endpoint STRING,
+              params MAP<STRING, STRING>,
+              job_settings MAP<STRING, STRING>
+            )
+            USING DELTA
         """)
 
         logger.info(f"Successfully created endpoint table '{full_table_name}'.")
@@ -121,10 +121,10 @@ def create_endpoint_table(
 # 2. CREATE VOLUME
 # -------------------------------------------------------------
 def create_volume(
-    catalog: str,
-    schema: str,
-    volume: str,
-    spark: SparkSession | None = None,
+        catalog: str,
+        schema: str,
+        volume: str,
+        spark: SparkSession | None = None,
 ) -> str:
     """
     Create a MANAGED Unity Catalog volume.
@@ -135,7 +135,6 @@ def create_volume(
       • Volume will be created inside the catalog's managed storage root
       • LOCATION clause must NOT be used for managed volumes
 
-    storage_root is kept ONLY so users don't forget where things live,
     but it is NOT used directly in CREATE VOLUME.
     """
     logger = getLogger(__name__)
@@ -200,5 +199,3 @@ def create_volume(
             exc_info=True,
         )
         raise
-
-

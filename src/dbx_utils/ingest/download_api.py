@@ -107,14 +107,6 @@ def default_save_data(
     """
     Save JSON page as a file in a UC Volume.
     """
-    if dbutils is None:
-        try:
-            # type: ignore[name-defined]
-            dbutils = globals()["dbutils"]
-        except KeyError:
-            raise RuntimeError(
-                "dbutils not found. Pass dbutils= explicitly outside Databricks."
-            )
 
     file_path = f"{download_folder}/{str(count).zfill(5)}.json"
     dbutils.fs.put(file_path, response.text, overwrite=True)
@@ -131,7 +123,6 @@ def download_endpoint_to_volume(
     params: Optional[Mapping[str, str]],
     options: Optional[Mapping[str, str]],
     download_folder: str,
-    dbutils: Any | None = None,
     save_fn: Optional[
         Callable[[requests.Response, str, int, Any], None]
     ] = None,

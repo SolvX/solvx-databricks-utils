@@ -102,7 +102,6 @@ def default_save_data(
     response: requests.Response,
     download_folder: str,
     count: int,
-    dbutils: Any | None = None,
 ) -> None:
     """
     Save JSON page as a file in a UC Volume.
@@ -164,7 +163,7 @@ def download_endpoint_to_volume(
                 break
             r, page_no = item
             try:
-                save_fn(r, download_folder, page_no, dbutils)
+                save_fn(r, download_folder, page_no)
             finally:
                 q.task_done()
 

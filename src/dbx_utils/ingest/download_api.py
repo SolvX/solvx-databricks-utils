@@ -3,24 +3,23 @@ Reusable download logic for paginated APIs on Databricks.
 
 This module uses the Databricks-friendly logger from:
     dbx_utils.logging.getLogger
+
+Assumptions:
+  - Code always runs on Azure Databricks.
+  - A global `dbutils` object exists in the __main__ module.
 """
 
 from __future__ import annotations
 
 import socket
 import time
-import threading
-import queue
-from typing import Mapping, Optional, Callable, Any
+from typing import Mapping, Optional, Callable
 from urllib.parse import urlparse
 
 import requests
 
-# Custom logger
 from dbx_utils.logging import getLogger
 
-
-# module-level logger
 logger = getLogger(__name__)
 
 
@@ -96,8 +95,25 @@ def request_with_backoff(
 
 
 # --------------------------------------------------------------------
-# Default saver → Databricks Volume
+# Default saver → Databricks Volume (synchronous)
 # --------------------------------------------------------------------
+def _get_dbutils():
+    """
+    Resolve dbutils from the Databricks environment.
+
+    Assumes code is running on Databricks where `dbutils` is defined
+    in the __main__ module (notebook / job).
+    """
+    try:
+        from __main__ import dbutils as _dbutils  # type: ignore
+        return _dbutils
+    except ImportError as exc:
+        raise RuntimeError(
+            "dbutils is not available in __main__. "
+            "This code assumes it is running on Databricks."
+        ) from exc
+
+
 def default_save_data(
     response: requests.Response,
     download_folder: str,
@@ -106,6 +122,7 @@ def default_save_data(
     """
     Save JSON page as a file in a UC Volume.
     """
+    dbutils = _get_dbutils()
 
     file_path = f"{download_folder}/{str(count).zfill(5)}.json"
     dbutils.fs.put(file_path, response.text, overwrite=True)
@@ -122,9 +139,7 @@ def download_endpoint_to_volume(
     params: Optional[Mapping[str, str]],
     options: Optional[Mapping[str, str]],
     download_folder: str,
-    save_fn: Optional[
-        Callable[[requests.Response, str, int, Any], None]
-    ] = None,
+    save_fn: Optional[Callable[[requests.Response, str, int], None]] = None,
     timeout: tuple[float, float] = (30.0, 300.0),
     max_attempts: int = 5,
     base_delay: float = 1.0,
@@ -151,24 +166,6 @@ def download_endpoint_to_volume(
         pagination_key = "@odata.nextLink"
 
     logger.info("Using pagination key: %s", pagination_key)
-
-    # for async writing
-    q: "queue.Queue[Optional[tuple[requests.Response, int]]]" = queue.Queue(maxsize=2)
-
-    # background writer thread
-    def writer():
-        while True:
-            item = q.get()
-            if item is None:
-                break
-            r, page_no = item
-            try:
-                save_fn(r, download_folder, page_no)
-            finally:
-                q.task_done()
-
-    t = threading.Thread(target=writer, daemon=True)
-    t.start()
 
     count = 1
     next_url = endpoint
@@ -200,9 +197,14 @@ def download_endpoint_to_volume(
             backoff_factor=backoff_factor,
         )
 
-        logger.info("Page %s downloaded in %.2f sec", count, time.perf_counter() - start_req)
+        logger.info(
+            "Page %s downloaded in %.2f sec",
+            count,
+            time.perf_counter() - start_req,
+        )
 
-        q.put((r, count))
+        # synchronous save → any error is visible and stops the loop
+        save_fn(r, download_folder, count)
         total_pages += 1
 
         # detect pagination link
@@ -219,10 +221,6 @@ def download_endpoint_to_volume(
 
         next_params = None
         count += 1
-
-    # stop writer thread
-    q.put(None)
-    t.join()
 
     total_time = time.perf_counter() - start_total
     logger.info("Completed download: %s pages in %.2f sec", total_pages, total_time)

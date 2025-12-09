@@ -3,8 +3,8 @@ SolvX Databricks utilities.
 """
 
 from .logging import getLogger, DEFAULT_LOG_FORMAT, DEFAULT_TIMEZONE, DatabricksTableHandler, enable_table_logging
-from .ingest import ingest_setup
-from .ingest import download_api
+from .ingest import ingest_setup, download_api, import_json
+
 
 __all__ = [
     "getLogger",
@@ -13,5 +13,6 @@ __all__ = [
     "DatabricksTableHandler",
     "enable_table_logging",
     "ingest_setup",
-    "download_api"
+    "download_api",
+    "import_json"
 ]

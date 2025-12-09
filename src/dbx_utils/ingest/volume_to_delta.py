@@ -121,22 +121,12 @@ def import_json(
     """
     Read all JSON files under a UC Volume folder and write them into a Delta table.
 
+    - If a top-level 'results' field exists and is an array, only its elements
+      are written to the table.
     - Every column is cast to STRING for safety.
     - The table name is either:
         - `target_table` (if provided), or
         - `<catalog>.<schema>.<last_segment_of_path>` derived from `volume_path`.
-
-    Parameters
-    ----------
-    volume_path
-        Root folder in the Volume containing the JSON files, e.g.
-        '/Volumes/dev/tools/testing/test/'.
-    target_table
-        Optional target table name. If omitted, the table name is derived from
-        the volume path (e.g. dev.tools.test).
-    multiline_json
-        Whether each file may contain multi-line JSON objects. Defaults to True
-        for safety.
     """
     spark = _get_spark()
     from pyspark.sql import functions as F  # imported here to keep module lightweight
@@ -153,8 +143,6 @@ def import_json(
         read_options["multiLine"] = "true"
 
     # Read all JSON files in the folder (and subfolders) in a scalable way.
-    # Spark will distribute the work across the cluster, which is appropriate
-    # for millions of small JSON files.
     df = spark.read.options(**read_options).json(volume_path)
 
     if not df.columns:
@@ -164,8 +152,19 @@ def import_json(
             volume_path,
         )
 
+    # If there is a top-level 'results' field, assume the useful data lives there
+    # and that it's a flat JSON object (or array of objects).
+    if "results" in df.columns:
+        logger.info(
+            "Detected 'results' column; extracting only its entries "
+            "and ignoring other top-level fields (next/previous/etc.)."
+        )
+        # Treat results as an array of objects and explode to one row per object.
+        df = df.select(F.explode("results").alias("row"))
+        # Flatten the struct to top-level columns.
+        df = df.select("row.*")
+
     # Cast EVERY column to STRING as requested.
-    # This avoids type issues now; you can interpret / cast in a later step.
     df_str = df.select(
         [F.col(c).cast("string").alias(c) for c in df.columns]
     )

@@ -124,12 +124,11 @@ def import_json(
     - If a top-level 'results' field exists and is an array, only its elements
       are written to the table.
     - Every column is cast to STRING for safety.
-    - The table name is either:
-        - `target_table` (if provided), or
-        - `<catalog>.<schema>.<last_segment_of_path>` derived from `volume_path`.
+    - If the schema of the incoming data does not match the existing table,
+      the table is automatically overwritten.
     """
     spark = _get_spark()
-    from pyspark.sql import functions as F  # imported here to keep module lightweight
+    from pyspark.sql import functions as F
 
     full_table_name = _resolve_full_table_name(volume_path, target_table)
     logger.info(
@@ -142,7 +141,6 @@ def import_json(
     if multiline_json:
         read_options["multiLine"] = "true"
 
-    # Read all JSON files in the folder (and subfolders) in a scalable way.
     df = spark.read.options(**read_options).json(volume_path)
 
     if not df.columns:
@@ -152,33 +150,48 @@ def import_json(
             volume_path,
         )
 
-    # If there is a top-level 'results' field, assume the useful data lives there
-    # and that it's a flat JSON object (or array of objects).
     if "results" in df.columns:
         logger.info(
             "Detected 'results' column; extracting only its entries "
             "and ignoring other top-level fields (next/previous/etc.)."
         )
-        # Treat results as an array of objects and explode to one row per object.
         df = df.select(F.explode("results").alias("row"))
-        # Flatten the struct to top-level columns.
         df = df.select("row.*")
 
-    # Cast EVERY column to STRING as requested.
+    # Cast EVERY column to STRING
     df_str = df.select(
         [F.col(c).cast("string").alias(c) for c in df.columns]
     )
 
+    incoming_cols = set(df_str.columns)
     logger.info(
         "Read %s rows with %s columns from %s",
         df_str.count(),
-        len(df_str.columns),
+        len(incoming_cols),
         volume_path,
     )
 
-    # Decide whether to create or append to the Delta table
+    # Determine write mode
     table_exists = spark.catalog.tableExists(full_table_name)
-    write_mode = "append" if table_exists else "overwrite"
+    write_mode = "overwrite"
+
+    if table_exists:
+        existing_cols = set(spark.table(full_table_name).columns)
+
+        if incoming_cols == existing_cols:
+            write_mode = "append"
+            logger.info(
+                "Incoming schema matches existing table -> append mode."
+            )
+        else:
+            write_mode = "overwrite"
+            logger.warning(
+                "Schema mismatch detected! "
+                "Existing columns: %s | Incoming columns: %s. "
+                "Overwriting table.",
+                existing_cols,
+                incoming_cols,
+            )
 
     logger.info(
         "Writing DataFrame to Delta table %s (mode=%s)",
@@ -190,6 +203,7 @@ def import_json(
         df_str.write
         .format("delta")
         .mode(write_mode)
+        .option("overwriteSchema", "true")
         .saveAsTable(full_table_name)
     )
 

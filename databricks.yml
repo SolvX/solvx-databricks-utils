@@ -23,7 +23,7 @@ resources:
         - task_key: Prepare_volume
           job_cluster_key: default_cluster
           notebook_task:
-            notebook_path: ./notebooks/1. prepare volume.py
+            notebook_path: ./notebooks/1. prepare volume.ipynb
             base_parameters:
               catalog: dev
               schema: tools
@@ -33,7 +33,7 @@ resources:
         - task_key: prepare_endpoints
           job_cluster_key: default_cluster
           notebook_task:
-            notebook_path: ./notebooks/2. prepare endpoints.py
+            notebook_path: ./notebooks/2. prepare endpoints.ipynb
             base_parameters:
               endpoint_table: dev.tools.endpoints
             source: GIT
@@ -49,7 +49,7 @@ resources:
               task_key: download_endpoint
               job_cluster_key: default_cluster
               notebook_task:
-                notebook_path: ./notebooks/3. download api.py
+                notebook_path: ./notebooks/3. download api.ipynb
                 base_parameters:
                   endpoint_payload: "{{input}}"
                   run_folder: "{{tasks.Prepare_volume.values.run_folder}}"

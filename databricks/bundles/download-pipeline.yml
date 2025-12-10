@@ -1,0 +1,50 @@
+bundle:
+  name: download-pipeline
+
+# Can add multiple targets (dev, prod, etc.)
+# As example we define a default target that deploys to your workspace.
+targets:
+  default:
+    mode: workspaces
+
+resources:
+  jobs:
+    Download_pipeline:
+      name: Download pipeline
+      tasks:
+        - task_key: Prepare_volume
+          notebook_task:
+            # Relative to repo root; bundle will upload this notebook to the workspace
+            notebook_path: ./notebooks/1. prepare volume.py
+            base_parameters:
+              catalog: dev
+              schema: tools
+              volume: testing
+            source: GIT
+
+        - task_key: prepare_endpoints
+          notebook_task:
+            notebook_path: ./notebooks/2. prepare endpoints.py
+            base_parameters:
+              endpoint_table: dev.tools.endpoints
+            source: GIT
+
+        - task_key: for_each_endpoint
+          depends_on:
+            - task_key: Prepare_volume
+            - task_key: prepare_endpoints
+          for_each_task:
+            inputs: "{{tasks.prepare_endpoints.values.endpoints}}"
+            concurrency: 4
+            task:
+              task_key: download_endpoint
+              notebook_task:
+                notebook_path: ./notebooks/3. download api.py
+                base_parameters:
+                  endpoint_payload: "{{input}}"
+                  run_folder: "{{tasks.Prepare_volume.values.run_folder}}"
+                source: GIT
+
+      # Job queue is fine to keep
+      queue:
+        enabled: true

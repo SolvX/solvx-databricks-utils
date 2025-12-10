@@ -1,6 +1,11 @@
 bundle:
   name: download-pipeline
 
+variables:
+  root_path:
+    description: "Full Databricks path of the solvx-databricks-utils root folder"
+    default: "/Workspace/Shared/solvx-databricks-utils"
+
 targets:
   dev:
     mode: development
@@ -11,32 +16,31 @@ resources:
     Download_pipeline:
       name: Download pipeline
 
-      # define a reusable job cluster for this job (can be changed in UI)
       job_clusters:
         - job_cluster_key: default_cluster
           new_cluster:
-            spark_version: 15.4.x-scala2.12   # adjust version
-            node_type_id: Standard_DS3_v2     # adjust node type
+            spark_version: 15.4.x-scala2.12 #Can be changed
+            node_type_id: Standard_DS3_v2 #Can be changed
             num_workers: 1
 
       tasks:
         - task_key: Prepare_volume
           job_cluster_key: default_cluster
           notebook_task:
-            notebook_path: ./notebooks/1. prepare volume.ipynb
+            notebook_path: "${var.root_path}/notebooks/1. prepare volume"
             base_parameters:
               catalog: dev
               schema: tools
               volume: testing
-            source: GIT
+            source: WORKSPACE
 
         - task_key: prepare_endpoints
           job_cluster_key: default_cluster
           notebook_task:
-            notebook_path: ./notebooks/2. prepare endpoints.ipynb
+            notebook_path: "${var.root_path}/notebooks/2. prepare endpoints"
             base_parameters:
               endpoint_table: dev.tools.endpoints
-            source: GIT
+            source: WORKSPACE
 
         - task_key: for_each_endpoint
           depends_on:
@@ -49,11 +53,11 @@ resources:
               task_key: download_endpoint
               job_cluster_key: default_cluster
               notebook_task:
-                notebook_path: ./notebooks/3. download api.ipynb
+                notebook_path: "${var.root_path}/notebooks/3. download api"
                 base_parameters:
                   endpoint_payload: "{{input}}"
                   run_folder: "{{tasks.Prepare_volume.values.run_folder}}"
-                source: GIT
+                source: WORKSPACE
 
       queue:
         enabled: true

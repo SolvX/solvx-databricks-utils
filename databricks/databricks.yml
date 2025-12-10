@@ -1,5 +1,0 @@
-bundles:
-  download-pipeline:
-    bundle:
-      name: download-pipeline
-    config_file: bundles/download-pipeline.yml

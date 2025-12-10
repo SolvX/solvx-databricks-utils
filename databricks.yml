@@ -1,20 +1,28 @@
 bundle:
   name: download-pipeline
 
-# Can add multiple targets (dev, prod, etc.)
-# As example we define a default target that deploys to your workspace.
 targets:
-  default:
-    mode: workspaces
+  dev:
+    mode: development
+    default: true
 
 resources:
   jobs:
     Download_pipeline:
       name: Download pipeline
+
+      # define a reusable job cluster for this job (can be changed in UI)
+      job_clusters:
+        - job_cluster_key: default_cluster
+          new_cluster:
+            spark_version: 15.4.x-scala2.12   # adjust version
+            node_type_id: Standard_DS3_v2     # adjust node type
+            num_workers: 1
+
       tasks:
         - task_key: Prepare_volume
+          job_cluster_key: default_cluster
           notebook_task:
-            # Relative to repo root; bundle will upload this notebook to the workspace
             notebook_path: ./notebooks/1. prepare volume.py
             base_parameters:
               catalog: dev
@@ -23,6 +31,7 @@ resources:
             source: GIT
 
         - task_key: prepare_endpoints
+          job_cluster_key: default_cluster
           notebook_task:
             notebook_path: ./notebooks/2. prepare endpoints.py
             base_parameters:
@@ -38,6 +47,7 @@ resources:
             concurrency: 4
             task:
               task_key: download_endpoint
+              job_cluster_key: default_cluster
               notebook_task:
                 notebook_path: ./notebooks/3. download api.py
                 base_parameters:
@@ -45,6 +55,5 @@ resources:
                   run_folder: "{{tasks.Prepare_volume.values.run_folder}}"
                 source: GIT
 
-      # Job queue is fine to keep
       queue:
         enabled: true

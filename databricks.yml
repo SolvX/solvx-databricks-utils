@@ -1,0 +1,79 @@
+bundle:
+  name: download-pipeline
+
+variables:
+  root_path:
+    description: "Full Databricks path of the solvx-databricks-utils root folder"
+    default: "/Workspace/Shared/solvx-databricks-utils"
+
+targets:
+  dev:
+    mode: development
+    default: true
+
+resources:
+  jobs:
+    Download_pipeline:
+      name: Download pipeline
+
+      job_clusters:
+        - job_cluster_key: default_cluster
+          new_cluster:
+            spark_version: 15.4.x-scala2.12  # Can be changed
+            node_type_id: Standard_DS3_v2    # Can be changed
+            num_workers: 1
+
+      tasks:
+        - task_key: Prepare_volume
+          job_cluster_key: default_cluster
+          notebook_task:
+            notebook_path: "${var.root_path}/notebooks/1. prepare volume"
+            base_parameters:
+              catalog: dev
+              schema: tools
+              volume: testing
+            source: WORKSPACE
+
+        - task_key: prepare_endpoints
+          job_cluster_key: default_cluster
+          notebook_task:
+            notebook_path: "${var.root_path}/notebooks/2. prepare endpoints"
+            base_parameters:
+              endpoint_table: dev.tools.endpoints
+            source: WORKSPACE
+
+        - task_key: for_each_endpoint_download
+          depends_on:
+            - task_key: Prepare_volume
+            - task_key: prepare_endpoints
+          for_each_task:
+            inputs: "{{tasks.prepare_endpoints.values.endpoints}}"
+            concurrency: 4
+            task:
+              task_key: download_endpoint
+              job_cluster_key: default_cluster
+              notebook_task:
+                notebook_path: "${var.root_path}/notebooks/3. download api"
+                base_parameters:
+                  endpoint_payload: "{{input}}"
+                  run_folder: "{{tasks.Prepare_volume.values.run_folder}}"
+                source: WORKSPACE
+
+        - task_key: for_each_endpoint_ingest
+          depends_on:
+            - task_key: for_each_endpoint_download
+          for_each_task:
+            inputs: "{{tasks.prepare_endpoints.values.endpoints}}"
+            concurrency: 1
+            task:
+              task_key: for_each_endpoint_ingest_iteration
+              job_cluster_key: default_cluster
+              notebook_task:
+                notebook_path: "${var.root_path}/notebooks/4. load data to delta"
+                base_parameters:
+                  endpoint_payload: "{{input}}"
+                  run_folder: "{{tasks.Prepare_volume.values.run_folder}}"
+                source: WORKSPACE
+
+      queue:
+        enabled: true

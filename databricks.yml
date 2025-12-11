@@ -19,8 +19,8 @@ resources:
       job_clusters:
         - job_cluster_key: default_cluster
           new_cluster:
-            spark_version: 15.4.x-scala2.12 #Can be changed
-            node_type_id: Standard_DS3_v2 #Can be changed
+            spark_version: 15.4.x-scala2.12  # Can be changed
+            node_type_id: Standard_DS3_v2    # Can be changed
             num_workers: 1
 
       tasks:
@@ -42,7 +42,7 @@ resources:
               endpoint_table: dev.tools.endpoints
             source: WORKSPACE
 
-        - task_key: for_each_endpoint
+        - task_key: for_each_endpoint_download
           depends_on:
             - task_key: Prepare_volume
             - task_key: prepare_endpoints
@@ -54,6 +54,22 @@ resources:
               job_cluster_key: default_cluster
               notebook_task:
                 notebook_path: "${var.root_path}/notebooks/3. download api"
+                base_parameters:
+                  endpoint_payload: "{{input}}"
+                  run_folder: "{{tasks.Prepare_volume.values.run_folder}}"
+                source: WORKSPACE
+
+        - task_key: for_each_endpoint_ingest
+          depends_on:
+            - task_key: for_each_endpoint_download
+          for_each_task:
+            inputs: "{{tasks.prepare_endpoints.values.endpoints}}"
+            concurrency: 1
+            task:
+              task_key: for_each_endpoint_ingest_iteration
+              job_cluster_key: default_cluster
+              notebook_task:
+                notebook_path: "${var.root_path}/notebooks/4. load data to delta"
                 base_parameters:
                   endpoint_payload: "{{input}}"
                   run_folder: "{{tasks.Prepare_volume.values.run_folder}}"

@@ -230,6 +230,9 @@ def download_endpoint_to_volume(
     while True:
         start_req = time.perf_counter()
 
+
+
+
         r = request_with_backoff(
             session=session,
             url=next_url,

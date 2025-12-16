@@ -7,7 +7,10 @@ variables:
     default: "/Workspace/Shared/solvx-databricks-utils"
 
 targets:
-  dev:
+  prod:
+    mode: production
+    default: false
+  test:
     mode: development
     default: true
 
@@ -23,6 +26,7 @@ resources:
             node_type_id: Standard_DS3_v2    # Can be changed
             num_workers: 1
 
+
       tasks:
         - task_key: Prepare_volume
           job_cluster_key: default_cluster
@@ -33,6 +37,8 @@ resources:
               schema: tools
               volume: testing
             source: WORKSPACE
+          libraries:
+            - whl: ./dist/solvx_databricks_utils-0.1.0-py3-none-any.whl
 
         - task_key: prepare_endpoints
           job_cluster_key: default_cluster
@@ -41,6 +47,8 @@ resources:
             base_parameters:
               endpoint_table: dev.tools.endpoints
             source: WORKSPACE
+          libraries:
+            - whl: ./dist/solvx_databricks_utils-0.1.0-py3-none-any.whl
 
         - task_key: for_each_endpoint_download
           depends_on:
@@ -58,6 +66,8 @@ resources:
                   endpoint_payload: "{{input}}"
                   run_folder: "{{tasks.Prepare_volume.values.run_folder}}"
                 source: WORKSPACE
+              libraries:
+                - whl: ./dist/solvx_databricks_utils-0.1.0-py3-none-any.whl
 
         - task_key: for_each_endpoint_ingest
           depends_on:
@@ -74,6 +84,8 @@ resources:
                   endpoint_payload: "{{input}}"
                   run_folder: "{{tasks.Prepare_volume.values.run_folder}}"
                 source: WORKSPACE
+              libraries:
+                - whl: ./dist/solvx_databricks_utils-0.1.0-py3-none-any.whl
 
       queue:
         enabled: true

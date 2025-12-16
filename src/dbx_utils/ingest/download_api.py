@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import socket
 import time
-from typing import Mapping, Optional, Callable
+from typing import Mapping, Optional, Callable, Literal, Any
 from urllib.parse import urlparse
 
 import requests
@@ -59,19 +59,27 @@ def request_with_backoff(
     session: requests.Session,
     url: str,
     params: Optional[Mapping[str, str]] = None,
+    *,
+    method: Literal["GET", "POST"] = "GET",
+    json_body: Optional[Any] = None,
+    data: Optional[Any] = None,
+    headers: Optional[Mapping[str, str]] = None,
     timeout: tuple[float, float] = (30.0, 300.0),
     max_attempts: int = 5,
     base_delay: float = 1.0,
     backoff_factor: float = 2.0,
 ) -> requests.Response:
     """
-    GET request with retries + exponential backoff.
+    HTTP request with retries + exponential backoff.
+
+    Supports GET and POST (and can be extended easily).
 
     Retries only on transient failures:
       - timeouts
       - connection errors (includes many DNS resolution failures)
       - HTTP 429
       - HTTP 5xx
+
 
     Fails fast (no retry) on:
       - HTTP 4xx (except 429)
@@ -85,9 +93,16 @@ def request_with_backoff(
 
     while True:
         try:
-            response = session.get(url=url, params=params, timeout=timeout)
+            response = session.request(
+                method=method,
+                url=url,
+                params=params,
+                json=json_body,
+                data=data,
+                headers=headers,
+                timeout=timeout,
+            )
 
-            # Decide retry policy based on HTTP status codes.
             try:
                 response.raise_for_status()
             except requests.exceptions.HTTPError as http_exc:
@@ -98,29 +113,23 @@ def request_with_backoff(
                         "Non-retryable HTTP %s for %s (attempt %s/%s).",
                         status, url, attempt, max_attempts
                     )
-                    raise  # fail fast on 4xx (except 429)
-                raise  # retryable HTTPError -> handled below
+                    raise
+                raise
 
             return response
 
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
-            # Transient network issue (often includes DNS resolution problems).
             last_exc = exc
-
-            # Re-check DNS only when we hit a network failure (not on every successful call).
             if hostname:
                 try:
                     wait_for_dns(hostname, attempts=max_attempts, base_delay=base_delay)
                 except Exception as dns_exc:
-                    # DNS wait itself failed; keep last_exc as the primary failure reason
                     logger.warning("DNS wait/check failed for %s: %s", hostname, dns_exc)
 
         except requests.exceptions.HTTPError as exc:
-            # Only retryable HTTP errors reach here (429 / 5xx)
             last_exc = exc
 
         except requests.exceptions.RequestException as exc:
-            # Non-retryable request errors (SSL, invalid URL, too many redirects, etc.)
             logger.error("Non-retryable request error for %s: %s", url, exc)
             raise
 
@@ -171,7 +180,6 @@ def default_save_data(
     dbutils.fs.put(file_path, response.text, overwrite=True)
     logger.info("Saved page %s → %s", count, file_path)
 
-
 # --------------------------------------------------------------------
 # Main: Download ONE endpoint into a UC Volume
 # --------------------------------------------------------------------
@@ -187,9 +195,16 @@ def download_endpoint_to_volume(
     max_attempts: int = 5,
     base_delay: float = 1.0,
     backoff_factor: float = 2.0,
+    method: Literal["GET", "POST"] = "GET",
+    json_body: Optional[Any] = None,
+    data: Optional[Any] = None,
+    headers: Optional[Mapping[str, str]] = None,
 ) -> int:
     """
     Download all paginated pages from a **single** API endpoint.
+
+    - GET: uses `params`
+    - POST: can send `json_body` (or `data`) and still paginate the same way.
 
     Pagination behavior is controlled by:
         options["pagination_key"]
@@ -201,10 +216,7 @@ def download_endpoint_to_volume(
     if save_fn is None:
         save_fn = default_save_data
 
-    # pagination key from options → fallback to @odata.nextLink
-    pagination_key = None
-    if options:
-        pagination_key = options.get("pagination_key")
+    pagination_key = options.get("pagination_key") if options else None
     if not pagination_key:
         pagination_key = "@odata.nextLink"
 
@@ -215,7 +227,6 @@ def download_endpoint_to_volume(
     next_params = params
     total_pages = 0
 
-    # helper for nested pagination keys like "links.next"
     def extract_nested(obj, path: str):
         keys = path.split(".")
         cur = obj
@@ -230,30 +241,25 @@ def download_endpoint_to_volume(
     while True:
         start_req = time.perf_counter()
 
-
-
-
         r = request_with_backoff(
             session=session,
             url=next_url,
             params=next_params,
+            method=method,
+            json_body=json_body,
+            data=data,
+            headers=headers,
             timeout=timeout,
             max_attempts=max_attempts,
             base_delay=base_delay,
             backoff_factor=backoff_factor,
         )
 
-        logger.info(
-            "Page %s downloaded in %.2f sec",
-            count,
-            time.perf_counter() - start_req,
-        )
+        logger.info("Page %s downloaded in %.2f sec", count, time.perf_counter() - start_req)
 
-        # synchronous save → any error is visible and stops the loop
         save_fn(r, download_folder, count)
         total_pages += 1
 
-        # detect pagination link
         try:
             body = r.json()
         except ValueError:
@@ -265,6 +271,7 @@ def download_endpoint_to_volume(
             logger.info("Pagination finished after %s pages.", total_pages)
             break
 
+        # nextLink-style pagination: next request is typically a full URL, so params are no longer needed
         next_params = None
         count += 1
 

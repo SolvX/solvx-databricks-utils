@@ -4,15 +4,24 @@ bundle:
 variables:
   root_path:
     description: "Full Databricks path of the solvx-databricks-utils root folder"
-    default: "/Workspace/Shared/solvx-databricks-utils"
+    default: "/Workspace/Shared/solvx-databricks-asset-bundle"
 
 targets:
   prod:
     mode: production
     default: false
+    presets:
+      trigger_pause_status: PAUSED
+    workspace:
+      root_path: /Workspace/Shared/solvx-databricks-asset-bundle
+    sync:
+      paths:
+        - notebooks
   test:
     mode: development
     default: true
+    presets:
+      trigger_pause_status: PAUSED
 
 resources:
   jobs:

@@ -65,33 +65,76 @@ def request_with_backoff(
     backoff_factor: float = 2.0,
 ) -> requests.Response:
     """
-    GET request with retries, DNS backoff and logging.
+    GET request with retries + exponential backoff.
+
+    Retries only on transient failures:
+      - timeouts
+      - connection errors (includes many DNS resolution failures)
+      - HTTP 429
+      - HTTP 5xx
+
+    Fails fast (no retry) on:
+      - HTTP 4xx (except 429)
+      - SSL errors, invalid URL, too many redirects, etc.
     """
     attempt = 1
     delay = base_delay
     hostname = urlparse(url).hostname
 
+    last_exc: Optional[BaseException] = None
+
     while True:
         try:
-            if hostname:
-                wait_for_dns(hostname, attempts=max_attempts, base_delay=base_delay)
-
             response = session.get(url=url, params=params, timeout=timeout)
-            response.raise_for_status()
+
+            # Decide retry policy based on HTTP status codes.
+            try:
+                response.raise_for_status()
+            except requests.exceptions.HTTPError as http_exc:
+                status = response.status_code
+                retryable = (status == 429) or (500 <= status <= 599)
+                if not retryable:
+                    logger.error(
+                        "Non-retryable HTTP %s for %s (attempt %s/%s).",
+                        status, url, attempt, max_attempts
+                    )
+                    raise  # fail fast on 4xx (except 429)
+                raise  # retryable HTTPError -> handled below
+
             return response
 
-        except requests.exceptions.RequestException as exc:
-            if attempt >= max_attempts:
-                logger.error("Request failed after %s attempts: %s", attempt, exc)
-                raise
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+            # Transient network issue (often includes DNS resolution problems).
+            last_exc = exc
 
-            logger.warning(
-                "Request failed (attempt %s/%s): %s. Retrying in %.1f sec",
-                attempt, max_attempts, exc, delay
-            )
-            time.sleep(delay)
-            attempt += 1
-            delay *= backoff_factor
+            # Re-check DNS only when we hit a network failure (not on every successful call).
+            if hostname:
+                try:
+                    wait_for_dns(hostname, attempts=max_attempts, base_delay=base_delay)
+                except Exception as dns_exc:
+                    # DNS wait itself failed; keep last_exc as the primary failure reason
+                    logger.warning("DNS wait/check failed for %s: %s", hostname, dns_exc)
+
+        except requests.exceptions.HTTPError as exc:
+            # Only retryable HTTP errors reach here (429 / 5xx)
+            last_exc = exc
+
+        except requests.exceptions.RequestException as exc:
+            # Non-retryable request errors (SSL, invalid URL, too many redirects, etc.)
+            logger.error("Non-retryable request error for %s: %s", url, exc)
+            raise
+
+        if attempt >= max_attempts:
+            logger.error("Request failed after %s attempts: %s", attempt, last_exc)
+            raise last_exc  # type: ignore[misc]
+
+        logger.warning(
+            "Request failed (attempt %s/%s): %s. Retrying in %.1f sec",
+            attempt, max_attempts, last_exc, delay
+        )
+        time.sleep(delay)
+        attempt += 1
+        delay *= backoff_factor
 
 
 # --------------------------------------------------------------------
